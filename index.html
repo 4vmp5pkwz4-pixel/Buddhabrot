@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <title>Buddhabrot · 4D Volumetric Explorer</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d111a'/%3E%3Ctext x='16' y='23' font-size='20' font-family='sans-serif' font-weight='800' text-anchor='middle' fill='%23d8b46a'%3EB%3C/text%3E%3C/svg%3E" />
+    <meta name="description" content="A premium, fully interactive 3D/4D Buddhabrot exploration instrument." />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <button id="panel-toggle" title="Toggle controls">⚙</button>
+    <div id="hint">Drag to orbit · Scroll to zoom · ⚙ for controls</div>
+    <script type="module" src="/src/main.ts"></script>
+    <script>
+      // Panel collapse toggle (kept tiny + inline so it works even before bundle load).
+      window.addEventListener('DOMContentLoaded', () => {
+        const btn = document.getElementById('panel-toggle');
+        btn.addEventListener('click', () => document.body.classList.toggle('panel-hidden'));
+        setTimeout(() => {
+          const h = document.getElementById('hint');
+          if (h) h.style.opacity = '0';
+        }, 6000);
+      });
+    </script>
+  </body>
+</html>
