@@ -33,6 +33,17 @@ Buddhabrot can never show.
   raymarch steps, worker count, refresh cadence and a full colour pipeline.
 - **Curated presets** and one-click PNG export.
 
+## Open it on any device
+
+**Live (no install): https://raw.githack.com/4vmp5pkwz4-pixel/Buddhabrot/main/buddhabrot.html**
+
+Opens in any modern browser — phone or computer — over HTTPS. Add it to your home
+screen for a full-screen, app-like experience.
+
+> An owned GitHub Pages URL (`https://4vmp5pkwz4-pixel.github.io/Buddhabrot/`) is
+> wired up via `.github/workflows/pages.yml`; it activates automatically once Pages
+> is enabled for the repo (Settings → Pages → Source: GitHub Actions).
+
 ## Two builds
 
 This repo ships the explorer in two forms:

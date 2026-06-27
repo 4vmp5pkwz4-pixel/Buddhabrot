@@ -37,16 +37,25 @@ jobs:
           cp buddhabrot.html _site/buddhabrot.html
           if [ -d docs ]; then cp -r docs _site/docs; fi
 
+      # Best-effort: if Pages has not been enabled for the repo yet (the Actions
+      # token cannot create the Pages site itself), this step fails softly and the
+      # deploy steps are skipped, keeping the workflow green. Enable Pages once in
+      # Settings → Pages (Source: GitHub Actions) and the next run deploys
+      # automatically. The app is also always available via the CDN URL in the README.
       - name: Configure Pages
+        id: pages
+        continue-on-error: true
         uses: actions/configure-pages@v5
         with:
           enablement: true
 
       - name: Upload artifact
+        if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment
+        if: steps.pages.outcome == 'success'
         uses: actions/deploy-pages@v4
