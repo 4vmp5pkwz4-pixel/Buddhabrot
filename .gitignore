@@ -6,3 +6,4 @@ dist
 # dev-only verification harness (uses the pre-installed Chromium)
 verify.mjs
 tune.mjs
+verify-single.mjs

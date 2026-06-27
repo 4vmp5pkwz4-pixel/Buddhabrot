@@ -33,7 +33,27 @@ Buddhabrot can never show.
   raymarch steps, worker count, refresh cadence and a full colour pipeline.
 - **Curated presets** and one-click PNG export.
 
+## Two builds
+
+This repo ships the explorer in two forms:
+
+1. **`buddhabrot.html` — single self-contained file.** Zero dependencies, no build
+   step, no special HTTP headers. Just open it — double-click the file, drop it on
+   any static host, or load it on a phone. It uses raw WebGL2 and a main-thread,
+   time-sliced progressive sampler, so it runs fluently on every device with a
+   WebGL2 browser (desktop, mobile, `file://`). This is the portable build.
+2. **The Vite + TypeScript project (`src/`)** — a multi-threaded edition that uses a
+   Web Worker pool over `SharedArrayBuffer` for maximum sampling throughput. It
+   requires a cross-origin-isolated context (COOP/COEP headers), which the dev and
+   preview servers provide automatically.
+
+Both share the same maths, look, controls and presets.
+
 ## Quick start
+
+**Single file:** open `buddhabrot.html` in any modern browser. Nothing to install.
+
+**Project (multi-threaded):**
 
 ```bash
 npm install
