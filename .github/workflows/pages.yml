@@ -1,0 +1,52 @@
+name: Deploy to GitHub Pages
+
+# Publishes the self-contained single-file explorer to GitHub Pages so it can be
+# opened from any phone or computer at the site URL. The single file is served as
+# the site root (index.html). Pages is enabled automatically by the workflow, so
+# no manual repository settings are required.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          # The portable single file becomes the site landing page.
+          cp buddhabrot.html _site/index.html
+          cp buddhabrot.html _site/buddhabrot.html
+          if [ -d docs ]; then cp -r docs _site/docs; fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
