@@ -102,7 +102,7 @@ input[type=color]{width:100%;height:32px;padding:2px;border-radius:9px;
 <body>
 <canvas id="view"></canvas>
 <button id="panel-toggle" title="Toggle controls">⚙</button>
-<div id="hint">Drag to orbit · pinch / scroll to zoom · ⚙ for controls</div>
+<div id="hint">Drag to turn · two-finger pan · pinch zoom · twist to roll · double-tap to centre</div>
 
 <script>
 "use strict";
@@ -130,7 +130,7 @@ function defaultConfig(){
     render:{ rayMarchSteps:224, renderScale:1.0, exposure:0.95, expR:1.7,expG:1.0,expB:0.7,
       gamma:2.2, logDensity:true, logScale:20, density:1.0, absorb:2.4, toneMap:'aces',
       saturation:1.5, background:'#05060a', showBox:false, jitter:1.0 },
-    camera:{ autoRotate:true, autoRotateSpeed:0.35, fov:45 },
+    camera:{ autoRotate:true, autoRotateSpeed:0.35, fov:45, sensitivity:1.0, inertia:0.92, invertY:false },
     perf:{ budgetMs:9, uploadInterval:380 }
   };
 }
@@ -186,6 +186,75 @@ var M={
             (a10*b10-a11*b08+a13*b06)*det,(a01*b08-a00*b10-a03*b06)*det,(a30*b04-a31*b02+a33*b00)*det,(a21*b02-a20*b04-a23*b00)*det,
             (a11*b07-a10*b09-a12*b06)*det,(a00*b09-a01*b07+a02*b06)*det,(a31*b01-a30*b03-a32*b00)*det,(a20*b03-a21*b01+a22*b00)*det];}
 };
+
+// ------------------------------------------------------------------ quaternions (camera arcball)
+var Q = {
+  mul: function (a, b) {
+    return [
+      a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1],
+      a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0],
+      a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3],
+      a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2],
+    ];
+  },
+  axisAngle: function (x, y, z, ang) { var h = ang * 0.5, s = Math.sin(h); return [x*s, y*s, z*s, Math.cos(h)]; },
+  norm: function (q) { var l = Math.hypot(q[0], q[1], q[2], q[3]) || 1; return [q[0]/l, q[1]/l, q[2]/l, q[3]/l]; },
+  // rotate vec3 v by quaternion q
+  rot: function (q, v) {
+    var x=q[0], y=q[1], z=q[2], w=q[3], vx=v[0], vy=v[1], vz=v[2];
+    var ix = w*vx + y*vz - z*vy, iy = w*vy + z*vx - x*vz, iz = w*vz + x*vy - y*vx, iw = -x*vx - y*vy - z*vz;
+    return [ix*w + iw*-x + iy*-z - iz*-y, iy*w + iw*-y + iz*-x - ix*-z, iz*w + iw*-z + ix*-y - iy*-x];
+  },
+  slerp: function (a, b, t) {
+    var d = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+    if (d < 0) { b = [-b[0], -b[1], -b[2], -b[3]]; d = -d; }
+    if (d > 0.9995) return Q.norm([a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, a[3]+(b[3]-a[3])*t]);
+    var th = Math.acos(d), s = Math.sin(th), w1 = Math.sin((1-t)*th)/s, w2 = Math.sin(t*th)/s;
+    return [a[0]*w1+b[0]*w2, a[1]*w1+b[1]*w2, a[2]*w1+b[2]*w2, a[3]*w1+b[3]*w2];
+  },
+  // quaternion from a right-handed orthonormal basis given as columns ex, ey, ez
+  fromBasis: function (ex, ey, ez) {
+    var m00=ex[0], m10=ex[1], m20=ex[2], m01=ey[0], m11=ey[1], m21=ey[2], m02=ez[0], m12=ez[1], m22=ez[2];
+    var tr = m00 + m11 + m22, q;
+    if (tr > 0) { var s = Math.sqrt(tr + 1) * 2; q = [(m21-m12)/s, (m02-m20)/s, (m10-m01)/s, 0.25*s]; }
+    else if (m00 > m11 && m00 > m22) { var s2 = Math.sqrt(1 + m00 - m11 - m22) * 2; q = [0.25*s2, (m01+m10)/s2, (m02+m20)/s2, (m21-m12)/s2]; }
+    else if (m11 > m22) { var s3 = Math.sqrt(1 + m11 - m00 - m22) * 2; q = [(m01+m10)/s3, 0.25*s3, (m12+m21)/s3, (m02-m20)/s3]; }
+    else { var s4 = Math.sqrt(1 + m22 - m00 - m11) * 2; q = [(m02+m20)/s4, (m12+m21)/s4, 0.25*s4, (m10-m01)/s4]; }
+    return Q.norm(q);
+  },
+};
+
+// Symmetric 3x3 eigen-decomposition (Jacobi). Returns sorted-descending
+// eigenvalues and their (column) eigenvectors. Used to align the figure's
+// principal axes to the screen.
+function eigenSym3(a) {
+  var m = [[a[0][0], a[0][1], a[0][2]], [a[1][0], a[1][1], a[1][2]], [a[2][0], a[2][1], a[2][2]]];
+  var v = [[1,0,0],[0,1,0],[0,0,1]];
+  for (var iter = 0; iter < 24; iter++) {
+    var p = 0, q = 1, off = Math.abs(m[0][1]);
+    if (Math.abs(m[0][2]) > off) { off = Math.abs(m[0][2]); p = 0; q = 2; }
+    if (Math.abs(m[1][2]) > off) { off = Math.abs(m[1][2]); p = 1; q = 2; }
+    if (off < 1e-12) break;
+    var app = m[p][p], aqq = m[q][q], apq = m[p][q];
+    var phi = 0.5 * Math.atan2(2 * apq, aqq - app), c = Math.cos(phi), s = Math.sin(phi);
+    for (var k = 0; k < 3; k++) {
+      var mkp = m[k][p], mkq = m[k][q];
+      m[k][p] = c*mkp - s*mkq; m[k][q] = s*mkp + c*mkq;
+    }
+    for (k = 0; k < 3; k++) {
+      var mpk = m[p][k], mqk = m[q][k];
+      m[p][k] = c*mpk - s*mqk; m[q][k] = s*mpk + c*mqk;
+    }
+    for (k = 0; k < 3; k++) {
+      var vkp = v[k][p], vkq = v[k][q];
+      v[k][p] = c*vkp - s*vkq; v[k][q] = s*vkp + c*vkq;
+    }
+  }
+  var vals = [m[0][0], m[1][1], m[2][2]];
+  var vecs = [[v[0][0],v[1][0],v[2][0]], [v[0][1],v[1][1],v[2][1]], [v[0][2],v[1][2],v[2][2]]];
+  var order = [0,1,2].sort(function (i, j) { return vals[j] - vals[i]; });
+  return { values: order.map(function (i) { return vals[i]; }), vectors: order.map(function (i) { return vecs[i]; }) };
+}
 
 // ------------------------------------------------------------------ 4D rotation matrix rows
 function buildRotation(g){
@@ -265,8 +334,14 @@ function Renderer(canvas){
   for(var i=0;i<names.length;i++)this.u[names[i]]=gl.getUniformLocation(prog,names[i]);
   this.tex=null; this.res=0;
   gl.disable(gl.DEPTH_TEST);
-  // orbit camera state
-  this.cam={theta:0.9,phi:1.15,radius:3.4,fov:45};
+  // Quaternion arcball camera. `q` orients the camera basis, `dist` is the
+  // dolly distance, `target` is the look-at point (panning moves it). vYaw/vPitch
+  // carry rotational inertia. The default pose is a pleasing three-quarter view.
+  this.cam = {
+    q: Q.norm(Q.mul(Q.axisAngle(1, 0, 0, -0.42), Q.axisAngle(0, 1, 0, 0.6))),
+    dist: 3.4, target: [0, 0, 0], fov: 45, vYaw: 0, vPitch: 0,
+  };
+  this.DEFAULT_CAM = JSON.parse(JSON.stringify(this.cam));
 }
 Renderer.prototype.allocVolume=function(res){
   var gl=this.gl; if(this.tex)gl.deleteTexture(this.tex);
@@ -302,9 +377,10 @@ Renderer.prototype.draw=function(time){
   var gl=this.gl,c=this.cam;
   var w=this.canvas.width,h=this.canvas.height; gl.viewport(0,0,w,h);
   gl.clear(gl.COLOR_BUFFER_BIT);
-  var sp=Math.sin(c.phi),cp=Math.cos(c.phi),st=Math.sin(c.theta),ct=Math.cos(c.theta);
-  var eye=[c.radius*sp*ct, c.radius*cp, c.radius*sp*st];
-  var view=M.lookAt(eye,[0,0,0],[0,1,0]);
+  var off=Q.rot(c.q,[0,0,c.dist]);
+  var eye=[c.target[0]+off[0], c.target[1]+off[1], c.target[2]+off[2]];
+  var up=Q.rot(c.q,[0,1,0]);
+  var view=M.lookAt(eye,c.target,up);
   var proj=M.perspective(c.fov*Math.PI/180, w/h, 0.01, 100);
   var invVP=M.invert(M.mul(proj,view));
   gl.useProgram(this.prog); gl.bindVertexArray(this.vao);
@@ -395,6 +471,29 @@ Sampler.prototype.pack=function(){
   for(i=0;i<n;i++){ var j=i*4; pk[j]=toHalf(vR[i]*iR); pk[j+1]=toHalf(vG[i]*iG); pk[j+2]=toHalf(vB[i]*iB); pk[j+3]=0; }
   return pk;
 };
+// Density-weighted centroid and covariance in box space ([-1,1]^3). Drives
+// auto-centering and principal-axis alignment. Single pass over the volume.
+Sampler.prototype.analyze=function(){
+  var res=this.res,vR=this.volR,vG=this.volG,vB=this.volB;
+  var inv=2/res; var idx=0;
+  var sw=0,sx=0,sy=0,sz=0,sxx=0,syy=0,szz=0,sxy=0,sxz=0,syz=0;
+  for(var z=0;z<res;z++){ var bz=(z+0.5)*inv-1;
+    for(var y=0;y<res;y++){ var by=(y+0.5)*inv-1;
+      for(var x=0;x<res;x++){ var w=vR[idx]+vG[idx]+vB[idx]; idx++;
+        if(w<=0)continue; var bx=(x+0.5)*inv-1;
+        sw+=w; sx+=w*bx; sy+=w*by; sz+=w*bz;
+        sxx+=w*bx*bx; syy+=w*by*by; szz+=w*bz*bz;
+        sxy+=w*bx*by; sxz+=w*bx*bz; syz+=w*by*bz;
+      }
+    }
+  }
+  if(sw<=0)return null;
+  var mx=sx/sw,my=sy/sw,mz=sz/sw;
+  var cov=[[sxx/sw-mx*mx, sxy/sw-mx*my, sxz/sw-mx*mz],
+           [sxy/sw-mx*my, syy/sw-my*my, syz/sw-my*mz],
+           [sxz/sw-mx*mz, syz/sw-my*mz, szz/sw-mz*mz]];
+  return { centroid:[mx,my,mz], cov:cov, weight:sw };
+};
 
 // ------------------------------------------------------------------ control panel
 function Panel(cfg,h){ this.cfg=cfg;this.h=h;this.el=document.createElement('div');this.el.className='panel';
@@ -477,12 +576,29 @@ Panel.prototype.build=function(){
   this.select(g,'Animated plane',this.cfg.geometry,'animPlane',
     [['Re c · Im c','a01'],['Re c · Re z','a02'],['Re c · Im z','a03'],['Im c · Re z','a12'],['Im c · Im z','a13'],['Re z · Im z','a23']],'render');
   this.slider(g,'Animation speed',this.cfg.geometry,'animSpeed',0,0.5,0.001,'render');
+  // View & Navigation
+  var view=this.section('View & Navigation',true);
+  var vnote=document.createElement('p');vnote.className='note';
+  vnote.textContent='Drag to turn the figure · two fingers to pan, pinch to zoom, twist to roll · double-tap to centre. Align uses the density’s principal axes.';
+  view.appendChild(vnote);
+  var vrow=document.createElement('div');vrow.className='btn-row';view.appendChild(vrow);
+  this.button(vrow,'⌖  Centre & Fit',function(){self.h.centerFit();});
+  this.button(vrow,'⟐  Align Axes',function(){self.h.alignAxes();});
+  var snap=document.createElement('div');snap.className='preset-row';view.appendChild(snap);
+  this.button(snap,'Front',function(){self.h.snapView('front');});
+  this.button(snap,'Top',function(){self.h.snapView('top');});
+  this.button(snap,'Side',function(){self.h.snapView('right');});
+  this.button(snap,'Iso',function(){self.h.snapView('iso');});
+  this.button(view,'↺  Reset camera',function(){self.h.resetCamera();}).classList.add('wide');
+  this.slider(view,'Drag sensitivity',this.cfg.camera,'sensitivity',0.2,3,0.01,'camera');
+  this.slider(view,'Inertia',this.cfg.camera,'inertia',0,0.98,0.01,'camera');
+  this.checkbox(view,'Invert vertical drag',this.cfg.camera,'invertY','camera');
+
   // Camera
   var cam=this.section('Camera',false);
   this.checkbox(cam,'Auto-orbit',this.cfg.camera,'autoRotate','camera');
   this.slider(cam,'Orbit speed',this.cfg.camera,'autoRotateSpeed',-3,3,0.01,'camera');
   this.slider(cam,'Field of view',this.cfg.camera,'fov',15,90,1,'camera');
-  this.button(cam,'Reset camera',function(){self.h.resetCamera();});
   this.refresh();
 };
 Panel.prototype.setStats=function(s,h,r,fps){this.s1.textContent=fmt(s);this.s2.textContent=fmt(h);
@@ -545,7 +661,12 @@ function App(){
     reset:function(){self.sampler.reset(self.cfg);self.lastSamples=0;},
     screenshot:function(){self.screenshot();},
     preset:function(i){self.preset(i);},
-    resetCamera:function(){self.renderer.cam.theta=0.9;self.renderer.cam.phi=1.15;self.renderer.cam.radius=3.4;}
+    resetCamera:function(){ var d=self.renderer.DEFAULT_CAM, c=self.renderer.cam;
+      c.dist=d.dist; c.target=d.target.slice(); c.vYaw=0; c.vPitch=0;
+      self.targetQuat=d.q.slice(); self.slewTo=performance.now()+360; },
+    centerFit:function(){self.centerFit();},
+    alignAxes:function(){self.alignAxes();},
+    snapView:function(w){self.snapView(w);}
   });
   document.body.appendChild(this.panel.el);
   this.installControls(canvas);
@@ -576,23 +697,126 @@ App.prototype.screenshot=function(){ var self=this; this.renderer.draw((performa
     a.href=URL.createObjectURL(b);a.download='buddhabrot-'+Date.now()+'.png';a.click();
     setTimeout(function(){URL.revokeObjectURL(a.href);},1000);}); };
 App.prototype.installControls=function(canvas){
-  var c=this.renderer.cam, self=this, drag=false, px=0,py=0, pinch=0;
-  function down(x,y){drag=true;px=x;py=y;}
-  function move(x,y){ if(!drag)return; var dx=x-px,dy=y-py;px=x;py=y;
-    c.theta-=dx*0.005; c.phi=Math.max(0.05,Math.min(Math.PI-0.05,c.phi-dy*0.005)); }
-  function up(){drag=false;}
-  canvas.addEventListener('mousedown',function(e){down(e.clientX,e.clientY);});
-  window.addEventListener('mousemove',function(e){move(e.clientX,e.clientY);});
-  window.addEventListener('mouseup',up);
-  canvas.addEventListener('wheel',function(e){e.preventDefault();
-    c.radius=Math.max(1.2,Math.min(20,c.radius*(1+Math.sign(e.deltaY)*0.08)));},{passive:false});
-  canvas.addEventListener('touchstart',function(e){ if(e.touches.length===1)down(e.touches[0].clientX,e.touches[0].clientY);
-    else if(e.touches.length===2)pinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);},{passive:false});
-  canvas.addEventListener('touchmove',function(e){ e.preventDefault();
-    if(e.touches.length===1)move(e.touches[0].clientX,e.touches[0].clientY);
-    else if(e.touches.length===2){var d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-      if(pinch)c.radius=Math.max(1.2,Math.min(20,c.radius*(pinch/d)));pinch=d;}},{passive:false});
-  canvas.addEventListener('touchend',function(){up();pinch=0;});
+  // World-class object manipulation: quaternion trackball (no gimbal lock,
+  // grab-and-turn from any orientation) + screen-space pan + dolly zoom + roll.
+  //   mouse:  left-drag = rotate · right/middle/shift-drag = pan · wheel = zoom · dbl-click = center & fit
+  //   touch:  1 finger = rotate · 2 fingers = pan + pinch-zoom + twist (roll) simultaneously · dbl-tap = center & fit
+  var self=this, c=this.renderer.cam;
+  var mode=0; // 0 none, 1 rotate, 2 pan
+  var px=0, py=0;
+  var t2=null;       // last two-finger {cx,cy,dist,ang}
+  var lastTap=0;
+
+  this.dragging=false;
+
+  function rotate(dx,dy){
+    var s = 0.006 * self.cfg.camera.sensitivity;
+    var sy = self.cfg.camera.invertY ? -1 : 1;
+    var yaw = -dx*s, pitch = -dy*s*sy;
+    c.q = Q.norm(Q.mul(c.q, Q.mul(Q.axisAngle(0,1,0,yaw), Q.axisAngle(1,0,0,pitch))));
+    c.vYaw = yaw; c.vPitch = pitch;          // seed inertia
+  }
+  function roll(d){ c.q = Q.norm(Q.mul(c.q, Q.axisAngle(0,0,1,d))); }
+  function pan(dx,dy){
+    // Move the look-at point in the camera screen plane (figure follows the fingers).
+    var h = self.renderer.canvas.height / (Math.min(window.devicePixelRatio,2));
+    var world = (2*c.dist*Math.tan(c.fov*Math.PI/360))/Math.max(1,h);
+    var r=Q.rot(c.q,[1,0,0]), u=Q.rot(c.q,[0,1,0]);
+    for(var i=0;i<3;i++) c.target[i] += (-dx*world)*r[i] + (dy*world)*u[i];
+  }
+  function zoom(f){ c.dist = Math.max(0.6, Math.min(30, c.dist*f)); }
+
+  // ---- mouse ----
+  canvas.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  canvas.addEventListener('mousedown', function(e){
+    self.dragging=true; c.vYaw=0; c.vPitch=0; px=e.clientX; py=e.clientY;
+    mode = (e.button===0 && !e.shiftKey) ? 1 : 2;
+  });
+  window.addEventListener('mousemove', function(e){
+    if(!self.dragging)return; var dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY;
+    if(mode===1) rotate(dx,dy); else pan(dx,dy);
+  });
+  window.addEventListener('mouseup', function(){ self.dragging=false; mode=0; });
+  canvas.addEventListener('wheel', function(e){ e.preventDefault();
+    zoom(1 + Math.sign(e.deltaY)*0.08); }, {passive:false});
+  canvas.addEventListener('dblclick', function(e){ e.preventDefault(); self.centerFit(); });
+
+  // ---- touch ----
+  function twoFinger(e){
+    var a=e.touches[0], b=e.touches[1];
+    return { cx:(a.clientX+b.clientX)/2, cy:(a.clientY+b.clientY)/2,
+      dist:Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY),
+      ang:Math.atan2(b.clientY-a.clientY, b.clientX-a.clientX) };
+  }
+  canvas.addEventListener('touchstart', function(e){
+    e.preventDefault(); c.vYaw=0; c.vPitch=0;
+    if(e.touches.length===1){ self.dragging=true; mode=1; px=e.touches[0].clientX; py=e.touches[0].clientY;
+      var now=performance.now(); if(now-lastTap<300){ self.centerFit(); } lastTap=now;
+    } else if(e.touches.length===2){ self.dragging=true; mode=0; t2=twoFinger(e); }
+  }, {passive:false});
+  canvas.addEventListener('touchmove', function(e){
+    e.preventDefault();
+    if(e.touches.length===1 && mode===1){
+      var dx=e.touches[0].clientX-px, dy=e.touches[0].clientY-py; px=e.touches[0].clientX; py=e.touches[0].clientY;
+      rotate(dx,dy);
+    } else if(e.touches.length===2 && t2){
+      var n=twoFinger(e);
+      pan(n.cx-t2.cx, n.cy-t2.cy);                 // two-finger drag → pan
+      if(t2.dist>0) zoom(t2.dist/n.dist);          // pinch → dolly
+      var da=n.ang-t2.ang; if(da>Math.PI)da-=2*Math.PI; if(da<-Math.PI)da+=2*Math.PI;
+      roll(da);                                    // twist → roll
+      t2=n;
+    }
+  }, {passive:false});
+  canvas.addEventListener('touchend', function(e){
+    if(e.touches.length===0){ self.dragging=false; mode=0; t2=null; }
+    else if(e.touches.length===1){ mode=1; px=e.touches[0].clientX; py=e.touches[0].clientY; t2=null; }
+  });
+};
+
+// Center the figure in frame (look at its density centroid) and dolly to fit.
+App.prototype.centerFit=function(){
+  var a=this.sampler.analyze(); if(!a)return; var c=this.renderer.cam;
+  c.target=[a.centroid[0],a.centroid[1],a.centroid[2]];
+  var e=eigenSym3(a.cov);
+  var ext=Math.sqrt(Math.max(e.values[0],1e-6))*2.4;   // ~2.4σ along the broadest axis
+  c.dist=Math.max(0.8,Math.min(30, ext/Math.tan(c.fov*Math.PI/360)));
+};
+
+// Align the figure's principal axes to the screen (broadest → horizontal,
+// next → vertical, thinnest → toward the camera) and center + fit.
+App.prototype.alignAxes=function(){
+  var a=this.sampler.analyze(); if(!a)return; var c=this.renderer.cam;
+  var e=eigenSym3(a.cov);
+  var ex=e.vectors[0].slice(), ey=e.vectors[1].slice(), ez=e.vectors[2].slice();
+  // enforce right-handed basis (ez = ex × ey)
+  var cx=ex[1]*ey[2]-ex[2]*ey[1], cy=ex[2]*ey[0]-ex[0]*ey[2], cz=ex[0]*ey[1]-ex[1]*ey[0];
+  if(cx*ez[0]+cy*ez[1]+cz*ez[2] < 0){ ez=[-ez[0],-ez[1],-ez[2]]; }
+  ez=[cx,cy,cz];
+  this.targetQuat = Q.fromBasis(ex,ey,ez);
+  this.slewTo = performance.now()+520;                 // smooth slerp handled in loop
+  c.target=[a.centroid[0],a.centroid[1],a.centroid[2]];
+  var ext=Math.sqrt(Math.max(e.values[0],1e-6))*2.4;
+  c.dist=Math.max(0.8,Math.min(30, ext/Math.tan(c.fov*Math.PI/360)));
+  this.cfg.camera.autoRotate=false; this.panel.refresh();
+};
+
+// Snap to a canonical axis-aligned view; centers on the figure.
+App.prototype.snapView=function(which){
+  var a=this.sampler.analyze(); var c=this.renderer.cam;
+  if(a){ c.target=[a.centroid[0],a.centroid[1],a.centroid[2]];
+    var e=eigenSym3(a.cov); var ext=Math.sqrt(Math.max(e.values[0],1e-6))*2.6;
+    c.dist=Math.max(0.8,Math.min(30, ext/Math.tan(c.fov*Math.PI/360))); }
+  var q;
+  if(which==='front') q=[0,0,0,1];
+  else if(which==='back') q=Q.axisAngle(0,1,0,Math.PI);
+  else if(which==='right') q=Q.axisAngle(0,1,0,Math.PI/2);
+  else if(which==='left') q=Q.axisAngle(0,1,0,-Math.PI/2);
+  else if(which==='top') q=Q.axisAngle(1,0,0,-Math.PI/2);
+  else if(which==='bottom') q=Q.axisAngle(1,0,0,Math.PI/2);
+  else q=Q.norm(Q.mul(Q.axisAngle(1,0,0,-0.42),Q.axisAngle(0,1,0,0.6))); // iso
+  this.targetQuat=Q.norm(q); this.slewTo=performance.now()+420;
+  this.cfg.camera.autoRotate=false; this.panel.refresh();
 };
 App.prototype.loop=function(){
   var self=this; var now=performance.now();
@@ -600,8 +824,20 @@ App.prototype.loop=function(){
   // animate 4D plane (throttled recompute)
   if(this.cfg.geometry.animate){ var g=this.cfg.geometry; g[g.animPlane]+=g.animSpeed*0.05;
     if(g[g.animPlane]>Math.PI)g[g.animPlane]-=2*Math.PI; this._animDirty=true; this.panel.refresh(); }
-  // auto-orbit
-  if(this.cfg.camera.autoRotate) this.renderer.cam.theta+=this.cfg.camera.autoRotateSpeed*0.003;
+  // camera dynamics: slew-to-target (snap/align), rotational inertia, auto-orbit
+  var c=this.renderer.cam;
+  if(this.targetQuat){
+    // ease toward target orientation via slerp; finish when close or timed out
+    c.q=Q.slerp(c.q,this.targetQuat,0.18);
+    var dot=Math.abs(c.q[0]*this.targetQuat[0]+c.q[1]*this.targetQuat[1]+c.q[2]*this.targetQuat[2]+c.q[3]*this.targetQuat[3]);
+    if(dot>0.99999||now>this.slewTo){ c.q=this.targetQuat; this.targetQuat=null; }
+  } else if(!this.dragging){
+    if(Math.abs(c.vYaw)>1e-5||Math.abs(c.vPitch)>1e-5){
+      c.q=Q.norm(Q.mul(c.q,Q.mul(Q.axisAngle(0,1,0,c.vYaw),Q.axisAngle(1,0,0,c.vPitch))));
+      var dmp=this.cfg.camera.inertia; c.vYaw*=dmp; c.vPitch*=dmp;
+    }
+    if(this.cfg.camera.autoRotate) c.q=Q.norm(Q.mul(c.q,Q.axisAngle(0,1,0,this.cfg.camera.autoRotateSpeed*0.01)));
+  }
   // sample
   if(this.running) this.sampler.runFor(this.cfg.perf.budgetMs);
   // periodic upload + stats

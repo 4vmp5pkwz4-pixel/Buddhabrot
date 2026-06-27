@@ -8,3 +8,4 @@ verify.mjs
 tune.mjs
 verify-single.mjs
 verify-live.mjs
+verify-controls.mjs
