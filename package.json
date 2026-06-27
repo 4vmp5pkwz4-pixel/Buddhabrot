@@ -1,0 +1,22 @@
+{
+  "name": "buddhabrot-3d-explorer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A premium, fully interactive 3D/4D Buddhabrot exploration instrument.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.185.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.0",
+    "playwright-core": "^1.61.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
