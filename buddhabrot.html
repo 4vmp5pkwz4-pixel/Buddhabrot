@@ -102,13 +102,19 @@ input[type=color]{width:100%;height:32px;padding:2px;border-radius:9px;
    the parameter list reaches its end without rubber-banding away. */
 .sheet-handle{display:none}
 body.sheet .panel{
-  left:0;right:0;top:auto;bottom:0;width:100%;height:50vh;max-height:92vh;
+  left:0;right:0;top:auto;bottom:0;width:100%;height:50vh;max-height:94vh;
+  transform:none!important;   /* never use transform in sheet mode (height-based) */
   border-left:none;border-top:1px solid var(--stroke-strong);
   border-radius:20px 20px 0 0;box-shadow:0 -18px 50px rgba(0,0,0,.55);
-  transition:height .3s cubic-bezier(.32,.72,0,1), transform .3s cubic-bezier(.32,.72,0,1);
+  transition:height .3s cubic-bezier(.32,.72,0,1);
   overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  padding-bottom:env(safe-area-inset-bottom);
 }
-body.sheet.panel-hidden .panel{transform:translateY(110%)!important}
+/* Closed: collapse the sheet to nothing (no transform — that fought the
+   side-drawer translateX rule and stuck mid-transition). */
+body.sheet.panel-hidden .panel{
+  height:0!important;min-height:0!important;border-top-color:transparent!important;box-shadow:none!important;
+}
 body.sheet .panel-header{position:static;padding-top:4px}
 body.sheet .sheet-handle{
   position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;
@@ -756,16 +762,23 @@ App.prototype.setupSheet=function(){
   panel.insertBefore(handle, panel.firstChild);
   // Snap heights are the *visible* heights of the sheet; the panel is sized to
   // exactly this, so its scroll area is always on-screen and reaches the end.
-  var S={h:0,snaps:{full:0,half:0,peek:70},name:'half',dragging:false,sy:0,sh:0};
-  function recalc(){ var H=window.innerHeight;
-    S.snaps={ peek:72, half:Math.round(H*0.52), full:Math.round(H*0.92) }; }
+  var S={h:0,gap:0,snaps:{full:0,half:0,peek:70},name:'half',dragging:false,sy:0,sh:0};
+  // Use the visual viewport so the sheet is sized to the *actually visible* area
+  // and lifted above the browser's bottom toolbar (the iOS Safari occlusion that
+  // hid the end of the list). Falls back to innerHeight where unavailable.
+  function vvH(){ var v=window.visualViewport; return (v&&v.height)||window.innerHeight; }
+  function gapBottom(){ var v=window.visualViewport; if(!v)return 0;
+    return Math.max(0, Math.round(window.innerHeight - v.height - v.offsetTop)); }
+  function recalc(){ var H=vvH(); S.gap=gapBottom();
+    S.snaps={ peek:74, half:Math.round(H*0.50), full:Math.round(H*0.93) };
+    panel.style.bottom=S.gap+'px'; }
   function inset(){ var open=mq.matches && !body.classList.contains('panel-hidden');
-    self.renderer.bottomInset = open ? S.h : 0; }
+    self.renderer.bottomInset = open ? (S.h + S.gap) : 0; }
   function setH(h){ S.h=h; panel.style.height=h+'px'; inset(); }
   function snap(name){ S.name=name; panel.style.transition=''; setH(S.snaps[name]||S.snaps.half); self.fitToView(); }
   function enable(on){ body.classList.toggle('sheet',on);
     if(on){ recalc(); body.classList.add('panel-hidden'); setH(S.snaps.half); self.renderer.bottomInset=0; }
-    else { panel.style.height=''; panel.style.transform=''; panel.style.transition=''; self.renderer.bottomInset=0; }
+    else { panel.style.height=''; panel.style.bottom=''; panel.style.transform=''; panel.style.transition=''; self.renderer.bottomInset=0; }
     self.fitToView(); }
   function ds(y){ if(!mq.matches)return; S.dragging=true; S.sy=y; S.sh=S.h; panel.style.transition='none'; }
   function dm(y){ if(!S.dragging)return;
@@ -785,7 +798,12 @@ App.prototype.setupSheet=function(){
       inset(); self.fitToView(); },0); });
   var onMq=function(){enable(mq.matches);};
   if(mq.addEventListener) mq.addEventListener('change',onMq); else if(mq.addListener) mq.addListener(onMq);
-  window.addEventListener('resize',function(){ if(mq.matches){ recalc(); setH(S.snaps[S.name]||S.snaps.half); } });
+  function reflow(){ if(mq.matches && !S.dragging && !body.classList.contains('panel-hidden')){
+    recalc(); setH(S.snaps[S.name]||S.snaps.half); } else if(mq.matches){ recalc(); } }
+  window.addEventListener('resize',reflow);
+  window.addEventListener('orientationchange',function(){ setTimeout(reflow,250); });
+  if(window.visualViewport){ window.visualViewport.addEventListener('resize',reflow);
+    window.visualViewport.addEventListener('scroll',reflow); }
   enable(mq.matches);
 };
 App.prototype.apply=function(kind){
