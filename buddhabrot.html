@@ -96,22 +96,24 @@ input[type=color]{width:100%;height:32px;padding:2px;border-radius:9px;
   border-radius:16px;padding:30px 32px;box-shadow:var(--shadow)}
 .fatal-card h2{margin:0 0 12px;color:var(--accent)}
 .fatal-card p{color:var(--text);line-height:1.6;font-size:13.5px}
-/* ---- mobile bottom sheet (golden-standard) ---- */
+/* ---- mobile bottom sheet (golden-standard) ----
+   The sheet is sized to its *visible* height (animated via height, not pushed
+   off-screen with transform) so the scroll area is always fully on-screen and
+   the parameter list reaches its end without rubber-banding away. */
 .sheet-handle{display:none}
 body.sheet .panel{
-  left:0;right:0;top:auto;bottom:0;width:100%;height:88vh;max-height:88vh;
+  left:0;right:0;top:auto;bottom:0;width:100%;height:50vh;max-height:92vh;
   border-left:none;border-top:1px solid var(--stroke-strong);
   border-radius:20px 20px 0 0;box-shadow:0 -18px 50px rgba(0,0,0,.55);
-  transition:transform .3s cubic-bezier(.32,.72,0,1);
-  padding-bottom:max(28px,env(safe-area-inset-bottom));
-  overscroll-behavior:contain;
+  transition:height .3s cubic-bezier(.32,.72,0,1), transform .3s cubic-bezier(.32,.72,0,1);
+  overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
 }
-body.sheet.panel-hidden .panel{transform:translateY(100%)!important}
-body.sheet .panel-header{position:static;padding-top:6px}
+body.sheet.panel-hidden .panel{transform:translateY(110%)!important}
+body.sheet .panel-header{position:static;padding-top:4px}
 body.sheet .sheet-handle{
   position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;
   padding:11px 0 7px;cursor:grab;touch-action:none;
-  background:linear-gradient(180deg,rgba(13,17,26,.98),rgba(13,17,26,.82));
+  background:linear-gradient(180deg,rgba(13,17,26,.99),rgba(13,17,26,.85));
 }
 body.sheet .sheet-handle:active{cursor:grabbing}
 body.sheet .sheet-handle::before{content:"";width:44px;height:5px;border-radius:3px;
@@ -119,6 +121,16 @@ body.sheet .sheet-handle::before{content:"";width:44px;height:5px;border-radius:
 @media (max-width:560px){
   body:not(.sheet) .panel{width:100vw}
 }
+/* ---- branded footer (signature) ---- */
+.brand-footer{display:flex;align-items:center;gap:13px;margin:22px 0 0;
+  padding:18px 20px max(22px,env(safe-area-inset-bottom));
+  border-top:1px solid var(--stroke)}
+.brand-footer .bm{width:34px;height:34px;border-radius:9px;flex:none;display:grid;
+  place-items:center;font-weight:800;font-size:16px;color:#1a1407;background:var(--accent-grad);
+  box-shadow:0 4px 14px rgba(216,180,106,.3)}
+.brand-footer .bt b{display:block;color:var(--text);font-size:11.5px;letter-spacing:2px;font-weight:700}
+.brand-footer .bt span{display:block;color:var(--dim);font-size:10px;letter-spacing:.6px;margin-top:3px}
+.brand-footer .bt em{color:var(--accent);font-style:normal}
 </style>
 </head>
 <body>
@@ -631,6 +643,15 @@ Panel.prototype.build=function(){
   this.checkbox(cam,'Auto-orbit',this.cfg.camera,'autoRotate','camera');
   this.slider(cam,'Orbit speed',this.cfg.camera,'autoRotateSpeed',-3,3,0.01,'camera');
   this.slider(cam,'Field of view',this.cfg.camera,'fov',15,90,1,'camera');
+
+  // Branded signature — sits at the very bottom of the parameter list.
+  var foot=document.createElement('div');foot.className='brand-footer';
+  foot.innerHTML='<div class="bm">B</div><div class="bt">'+
+    '<b>BUDDHABROT</b>'+
+    '<span>4D Volumetric Explorer · <em>Premium Studio Edition</em></span>'+
+    '<span>Engineered to the golden standard · ∞</span></div>';
+  this.el.appendChild(foot);
+
   this.refresh();
 };
 Panel.prototype.setStats=function(s,h,r,fps){this.s1.textContent=fmt(s);this.s2.textContent=fmt(h);
@@ -733,21 +754,24 @@ App.prototype.setupSheet=function(){
   var mq=window.matchMedia('(max-width: 700px)');
   var handle=document.createElement('div'); handle.className='sheet-handle';
   panel.insertBefore(handle, panel.firstChild);
-  var S={H:0,t:0,snaps:{full:0,half:0,peek:0},name:'half',dragging:false,sy:0,st:0};
-  function recalc(){ S.H=panel.offsetHeight;
-    S.snaps={ full:0, half:Math.round(S.H*0.46), peek:Math.max(0,S.H-70) }; }
+  // Snap heights are the *visible* heights of the sheet; the panel is sized to
+  // exactly this, so its scroll area is always on-screen and reaches the end.
+  var S={h:0,snaps:{full:0,half:0,peek:70},name:'half',dragging:false,sy:0,sh:0};
+  function recalc(){ var H=window.innerHeight;
+    S.snaps={ peek:72, half:Math.round(H*0.52), full:Math.round(H*0.92) }; }
   function inset(){ var open=mq.matches && !body.classList.contains('panel-hidden');
-    self.renderer.bottomInset = open ? Math.max(0,S.H-S.t) : 0; }
-  function setT(t){ S.t=t; panel.style.transform='translateY('+t+'px)'; inset(); }
-  function snap(name){ S.name=name; panel.style.transition=''; setT(S.snaps[name]||0); self.fitToView(); }
+    self.renderer.bottomInset = open ? S.h : 0; }
+  function setH(h){ S.h=h; panel.style.height=h+'px'; inset(); }
+  function snap(name){ S.name=name; panel.style.transition=''; setH(S.snaps[name]||S.snaps.half); self.fitToView(); }
   function enable(on){ body.classList.toggle('sheet',on);
-    if(on){ recalc(); body.classList.add('panel-hidden'); setT(S.snaps.half); self.renderer.bottomInset=0; }
-    else { panel.style.transform=''; panel.style.transition=''; self.renderer.bottomInset=0; }
+    if(on){ recalc(); body.classList.add('panel-hidden'); setH(S.snaps.half); self.renderer.bottomInset=0; }
+    else { panel.style.height=''; panel.style.transform=''; panel.style.transition=''; self.renderer.bottomInset=0; }
     self.fitToView(); }
-  function ds(y){ if(!mq.matches)return; S.dragging=true; S.sy=y; S.st=S.t; panel.style.transition='none'; }
-  function dm(y){ if(!S.dragging)return; var nt=Math.min(S.snaps.peek,Math.max(0,S.st+(y-S.sy))); setT(nt); }
+  function ds(y){ if(!mq.matches)return; S.dragging=true; S.sy=y; S.sh=S.h; panel.style.transition='none'; }
+  function dm(y){ if(!S.dragging)return;
+    var nh=Math.max(S.snaps.peek, Math.min(S.snaps.full, S.sh+(S.sy-y))); setH(nh); }  // drag up grows the sheet
   function de(){ if(!S.dragging)return; S.dragging=false; panel.style.transition='';
-    var best='half',bd=1e9; for(var k in S.snaps){var d=Math.abs(S.snaps[k]-S.t); if(d<bd){bd=d;best=k;}} snap(best); }
+    var best='half',bd=1e9; for(var k in S.snaps){var d=Math.abs(S.snaps[k]-S.h); if(d<bd){bd=d;best=k;}} snap(best); }
   handle.addEventListener('touchstart',function(e){ds(e.touches[0].clientY);},{passive:true});
   handle.addEventListener('touchmove',function(e){e.preventDefault();dm(e.touches[0].clientY);},{passive:false});
   handle.addEventListener('touchend',de); handle.addEventListener('touchcancel',de);
@@ -757,11 +781,11 @@ App.prototype.setupSheet=function(){
   // react after the ⚙ toggle flips .panel-hidden
   document.getElementById('panel-toggle').addEventListener('click',function(){
     setTimeout(function(){ if(!mq.matches)return;
-      if(!body.classList.contains('panel-hidden')){ recalc(); setT(S.snaps[S.name]||S.snaps.half); }
+      if(!body.classList.contains('panel-hidden')){ recalc(); setH(S.snaps[S.name]||S.snaps.half); }
       inset(); self.fitToView(); },0); });
   var onMq=function(){enable(mq.matches);};
   if(mq.addEventListener) mq.addEventListener('change',onMq); else if(mq.addListener) mq.addListener(onMq);
-  window.addEventListener('resize',function(){ if(mq.matches){ recalc(); setT(S.snaps[S.name]||S.snaps.half); } });
+  window.addEventListener('resize',function(){ if(mq.matches){ recalc(); setH(S.snaps[S.name]||S.snaps.half); } });
   enable(mq.matches);
 };
 App.prototype.apply=function(kind){

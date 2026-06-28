@@ -11,3 +11,5 @@ verify-live.mjs
 verify-controls.mjs
 verify-mobile.mjs
 verify-desk.mjs
+verify-scroll.mjs
+verify-boot.mjs
