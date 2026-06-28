@@ -96,7 +96,29 @@ input[type=color]{width:100%;height:32px;padding:2px;border-radius:9px;
   border-radius:16px;padding:30px 32px;box-shadow:var(--shadow)}
 .fatal-card h2{margin:0 0 12px;color:var(--accent)}
 .fatal-card p{color:var(--text);line-height:1.6;font-size:13.5px}
-@media (max-width:560px){.panel{width:100vw}}
+/* ---- mobile bottom sheet (golden-standard) ---- */
+.sheet-handle{display:none}
+body.sheet .panel{
+  left:0;right:0;top:auto;bottom:0;width:100%;height:88vh;max-height:88vh;
+  border-left:none;border-top:1px solid var(--stroke-strong);
+  border-radius:20px 20px 0 0;box-shadow:0 -18px 50px rgba(0,0,0,.55);
+  transition:transform .3s cubic-bezier(.32,.72,0,1);
+  padding-bottom:max(28px,env(safe-area-inset-bottom));
+  overscroll-behavior:contain;
+}
+body.sheet.panel-hidden .panel{transform:translateY(100%)!important}
+body.sheet .panel-header{position:static;padding-top:6px}
+body.sheet .sheet-handle{
+  position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;
+  padding:11px 0 7px;cursor:grab;touch-action:none;
+  background:linear-gradient(180deg,rgba(13,17,26,.98),rgba(13,17,26,.82));
+}
+body.sheet .sheet-handle:active{cursor:grabbing}
+body.sheet .sheet-handle::before{content:"";width:44px;height:5px;border-radius:3px;
+  background:var(--stroke-strong)}
+@media (max-width:560px){
+  body:not(.sheet) .panel{width:100vw}
+}
 </style>
 </head>
 <body>
@@ -285,14 +307,14 @@ var VERT="#version 300 es\n"+
 var FRAG="#version 300 es\n"+
 "precision highp float;precision highp sampler3D;\n"+
 "out vec4 outColor;\n"+
-"uniform sampler3D uVolume;uniform vec2 uViewport;uniform mat4 uInvVP;uniform vec3 uCam;\n"+
+"uniform sampler3D uVolume;uniform vec4 uViewport;uniform mat4 uInvVP;uniform vec3 uCam;\n"+
 "uniform float uSteps,uExposure,uDensity,uAbsorb,uGamma,uLog,uLogScale,uTone,uSat,uJitter,uTime,uShowBox;\n"+
 "uniform vec3 uChanExp;\n"+
 "float hash(vec3 p){p=fract(p*0.3183099+0.1);p*=17.0;return fract(p.x*p.y*p.z*(p.x+p.y+p.z));}\n"+
 "vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0);}\n"+
 "vec3 filmic(vec3 x){vec3 X=max(vec3(0.0),x-0.004);vec3 r=(X*(6.2*X+0.5))/(X*(6.2*X+1.7)+0.06);return pow(r,vec3(2.2));}\n"+
 "void main(){\n"+
-"  vec2 ndc=(gl_FragCoord.xy/uViewport)*2.0-1.0;\n"+
+"  vec2 ndc=((gl_FragCoord.xy-uViewport.xy)/uViewport.zw)*2.0-1.0;\n"+
 "  vec4 w=uInvVP*vec4(ndc,1.0,1.0); w/=w.w;\n"+
 "  vec3 ro=uCam; vec3 rd=normalize(w.xyz-uCam);\n"+
 "  vec3 inv=1.0/rd; vec3 t0=(vec3(-1.0)-ro)*inv; vec3 t1=(vec3(1.0)-ro)*inv;\n"+
@@ -342,6 +364,10 @@ function Renderer(canvas){
     dist: 3.4, target: [0, 0, 0], fov: 45, vYaw: 0, vPitch: 0,
   };
   this.DEFAULT_CAM = JSON.parse(JSON.stringify(this.cam));
+  // CSS-pixel insets reserved at the bottom (mobile sheet) so the figure is
+  // rendered into the visible area only and is never hidden behind the panel.
+  this.bottomInset = 0;
+  this.lastAspect = 1;
 }
 Renderer.prototype.allocVolume=function(res){
   var gl=this.gl; if(this.tex)gl.deleteTexture(this.tex);
@@ -375,18 +401,24 @@ Renderer.prototype.applyRender=function(r){
 };
 Renderer.prototype.draw=function(time){
   var gl=this.gl,c=this.cam;
-  var w=this.canvas.width,h=this.canvas.height; gl.viewport(0,0,w,h);
-  gl.clear(gl.COLOR_BUFFER_BIT);
+  var w=this.canvas.width,h=this.canvas.height;
+  gl.viewport(0,0,w,h); gl.clear(gl.COLOR_BUFFER_BIT);
+  // Render only into the region above the bottom sheet so the figure stays whole.
+  var pr=h/Math.max(1,window.innerHeight);
+  var bottom=Math.round((this.bottomInset||0)*pr);
+  var vw=w, vh=Math.max(8,h-bottom), ox=0, oy=bottom;
+  this.lastAspect=vw/vh;
+  gl.viewport(ox,oy,vw,vh);
   var off=Q.rot(c.q,[0,0,c.dist]);
   var eye=[c.target[0]+off[0], c.target[1]+off[1], c.target[2]+off[2]];
   var up=Q.rot(c.q,[0,1,0]);
   var view=M.lookAt(eye,c.target,up);
-  var proj=M.perspective(c.fov*Math.PI/180, w/h, 0.01, 100);
+  var proj=M.perspective(c.fov*Math.PI/180, vw/vh, 0.01, 100);
   var invVP=M.invert(M.mul(proj,view));
   gl.useProgram(this.prog); gl.bindVertexArray(this.vao);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_3D,this.tex);
   gl.uniform1i(this.u.uVolume,0);
-  gl.uniform2f(this.u.uViewport,w,h);
+  gl.uniform4f(this.u.uViewport,ox,oy,vw,vh);
   gl.uniformMatrix4fv(this.u.uInvVP,false,invVP);
   gl.uniform3f(this.u.uCam,eye[0],eye[1],eye[2]);
   gl.uniform1f(this.u.uTime,time);
@@ -678,9 +710,60 @@ function App(){
   this.renderer.allocVolume(this.cfg.volume.resolution);
   this.sampler.reset(this.cfg);
   this.renderer.applyRender(this.cfg.render);
+  this.setupSheet();
   window.buddhabrot=this;
   this.loop();
 }
+// Frame the whole figure inside the currently visible region (accounts for the
+// mobile sheet inset via the live render aspect ratio).
+App.prototype.fitToView=function(){
+  var a=this.sampler.analyze(); if(!a)return; var c=this.renderer.cam;
+  c.target=[a.centroid[0],a.centroid[1],a.centroid[2]];
+  var e=eigenSym3(a.cov);
+  var R=Math.sqrt(Math.max(e.values[0]+e.values[1]+e.values[2],1e-6))*2.25; // bounding radius
+  var aspect=this.renderer.lastAspect||(window.innerWidth/window.innerHeight);
+  var fv=this.cfg.camera.fov*Math.PI/180, fh=2*Math.atan(Math.tan(fv/2)*aspect);
+  var dist=Math.max(R/Math.tan(fv/2), R/Math.tan(fh/2))*1.06;
+  c.dist=Math.max(0.8,Math.min(30,dist));
+};
+// Golden-standard mobile bottom sheet: draggable, snaps to peek / half / full,
+// keeps the figure visible above it. Desktop keeps the side drawer untouched.
+App.prototype.setupSheet=function(){
+  var self=this, panel=this.panel.el, body=document.body;
+  var mq=window.matchMedia('(max-width: 700px)');
+  var handle=document.createElement('div'); handle.className='sheet-handle';
+  panel.insertBefore(handle, panel.firstChild);
+  var S={H:0,t:0,snaps:{full:0,half:0,peek:0},name:'half',dragging:false,sy:0,st:0};
+  function recalc(){ S.H=panel.offsetHeight;
+    S.snaps={ full:0, half:Math.round(S.H*0.46), peek:Math.max(0,S.H-70) }; }
+  function inset(){ var open=mq.matches && !body.classList.contains('panel-hidden');
+    self.renderer.bottomInset = open ? Math.max(0,S.H-S.t) : 0; }
+  function setT(t){ S.t=t; panel.style.transform='translateY('+t+'px)'; inset(); }
+  function snap(name){ S.name=name; panel.style.transition=''; setT(S.snaps[name]||0); self.fitToView(); }
+  function enable(on){ body.classList.toggle('sheet',on);
+    if(on){ recalc(); body.classList.add('panel-hidden'); setT(S.snaps.half); self.renderer.bottomInset=0; }
+    else { panel.style.transform=''; panel.style.transition=''; self.renderer.bottomInset=0; }
+    self.fitToView(); }
+  function ds(y){ if(!mq.matches)return; S.dragging=true; S.sy=y; S.st=S.t; panel.style.transition='none'; }
+  function dm(y){ if(!S.dragging)return; var nt=Math.min(S.snaps.peek,Math.max(0,S.st+(y-S.sy))); setT(nt); }
+  function de(){ if(!S.dragging)return; S.dragging=false; panel.style.transition='';
+    var best='half',bd=1e9; for(var k in S.snaps){var d=Math.abs(S.snaps[k]-S.t); if(d<bd){bd=d;best=k;}} snap(best); }
+  handle.addEventListener('touchstart',function(e){ds(e.touches[0].clientY);},{passive:true});
+  handle.addEventListener('touchmove',function(e){e.preventDefault();dm(e.touches[0].clientY);},{passive:false});
+  handle.addEventListener('touchend',de); handle.addEventListener('touchcancel',de);
+  handle.addEventListener('mousedown',function(e){e.preventDefault();ds(e.clientY);});
+  window.addEventListener('mousemove',function(e){dm(e.clientY);});
+  window.addEventListener('mouseup',de);
+  // react after the ⚙ toggle flips .panel-hidden
+  document.getElementById('panel-toggle').addEventListener('click',function(){
+    setTimeout(function(){ if(!mq.matches)return;
+      if(!body.classList.contains('panel-hidden')){ recalc(); setT(S.snaps[S.name]||S.snaps.half); }
+      inset(); self.fitToView(); },0); });
+  var onMq=function(){enable(mq.matches);};
+  if(mq.addEventListener) mq.addEventListener('change',onMq); else if(mq.addListener) mq.addListener(onMq);
+  window.addEventListener('resize',function(){ if(mq.matches){ recalc(); setT(S.snaps[S.name]||S.snaps.half); } });
+  enable(mq.matches);
+};
 App.prototype.apply=function(kind){
   if(kind==='render'){ this.renderer.applyRender(this.cfg.render); }
   else if(kind==='camera'){ this.renderer.cam.fov=this.cfg.camera.fov; }
